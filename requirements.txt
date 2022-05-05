@@ -1,2 +1,3 @@
 nbodykit
 pySpectrum
+numpy>=1.20

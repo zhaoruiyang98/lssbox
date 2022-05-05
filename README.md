@@ -5,12 +5,13 @@ personal codes for Large-scale Structures measurement
 create a clean conda environment
 ```bash
 conda create -n lssbox python=3.8
+conda activate lssbox
 ```
 ### nbodykit
 ```bash
 git clone http://github.com/bccp/nbodykit
 cd nbodykit
-conda install -c bccp --file requirements.txt
+conda install -c bccp --file requirements.txt "numpy<1.21"
 conda install -c bccp --file requirements-extras.txt
 pip install -e .
 ```
@@ -21,7 +22,7 @@ cd pySpectrum
 conda install h5py
 conda install -c conda-forge pyfftw
 sudo apt install fftw3
-# replace -fallow-argument-mismatch to -Wno-argument-mismatch
+# replace -fallow-argument-mismatch with -Wno-argument-mismatch
 pip install -e .
 ```
 ### lssbox

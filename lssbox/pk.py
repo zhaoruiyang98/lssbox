@@ -5,6 +5,8 @@ from typing import cast
 from nbodykit.algorithms.fftpower import _find_unique_edges
 from nbodykit.algorithms.fftpower import FFTPower
 from nbodykit.algorithms.fftpower import project_to_basis
+from nbodykit.base.catalog import CatalogSourceBase
+from nbodykit.base.mesh import MeshSource
 from pmesh.pm import ComplexField
 
 
@@ -20,35 +22,95 @@ def rescale_y3d(
     y3d.x = rawx
 
 
+def _cast_source(
+    source, BoxSize, Nmesh,
+    resampler='cic', interlaced=False, compensated=True,
+):
+    from pmesh.pm import Field
+    from nbodykit.source.mesh import FieldMesh
+
+    if isinstance(source, Field):
+        source = FieldMesh(source)
+    elif isinstance(source, CatalogSourceBase):
+        if not isinstance(source, MeshSource):
+            source = source.to_mesh(
+                BoxSize=BoxSize, Nmesh=Nmesh, dtype='f8', resampler=resampler,
+                interlaced=interlaced, compensated=compensated)
+    if not isinstance(source, MeshSource):
+        raise TypeError(f'Unknow type of source in FFTPowerAP: {type(source)}')
+    if BoxSize is not None and any(source.attrs['BoxSize'] != BoxSize):
+        raise ValueError(
+            'Mismatched BoxSize between __init__ and source.attrs')
+    if Nmesh is not None and any(source.attrs['Nmesh'] != Nmesh):
+        raise ValueError(
+            'Mismatched Nmesh between __init__ and source.attrs;'
+            'if trying to re-sample with a different mesh, specify '
+            '`Nmesh` as keyword of to_mesh()')
+
+    return source
+
+
 class FFTPowerAP(FFTPower):
-    """
+    """Support AP effect via rebinning, ref: https://arxiv.org/abs/2003.08277
+
     alpara: float
         true / fiducial, parallel to line-of-sight scale factor, by default 1
     alperp: float
         true / fiducial, perpendicular to line-of-sight scale factor, by default 1
 
+    resampler: str
+        works only when first and second are instance of CatalogSourceBase, by default 'cic'
+    interlaced: bool
+        works only when first and second are instance of CatalogSourceBase, by default False
+    compensated: bool
+        works only when first and second are instance of CatalogSourceBase, by default True
+
     Notes
     -----
-    shot noise and power spectrum should be rescaled manually by 1 / (alperp**2 * alpara)
+    shot noise and power spectrum has been rescaled by 1 / (alperp**2 * alpara)
     """
 
     def __init__(
         self, first, mode, Nmesh=None, BoxSize=None, second=None,
         los=[0, 0, 1], Nmu=5, dk=None, kmin=0., kmax=None, poles=[],
-        alpara=1.0, alperp=1.0,
+        alpara=1.0, alperp=1.0, resampler='cic',
+        interlaced=False, compensated=True,
     ):
         self.alpara, self.alperp = alpara, alperp
         if not (los == [0, 0, 1] or los == [0, 1, 0] or los == [1, 0, 0]):
             raise ValueError(
-                "LOS must be [0, 0, 1], [0, 1, 0] or [1, 0, 0]."
-            )
+                "LOS must be [0, 0, 1], [0, 1, 0] or [1, 0, 0].")
+
+        # copied from FFTPower, check first!
+        # mode is either '1d' or '2d'
+        if mode not in ['1d', '2d']:
+            raise ValueError("`mode` should be either '1d' or '2d'")
+
+        # check los
+        if numpy.isscalar(los) or len(los) != 3:
+            raise ValueError(
+                "line-of-sight ``los`` should be vector with length 3")
+        if not numpy.allclose(numpy.einsum('i,i', los, los), 1.0, rtol=1e-5):
+            raise ValueError("line-of-sight ``los`` must be a unit vector")
+        # ----------------------------------
+        # perform cast_source here
+        first = _cast_source(
+            first, Nmesh=Nmesh, BoxSize=BoxSize, resampler=resampler,
+            interlaced=interlaced, compensated=compensated)
+        if second is not None:
+            second = _cast_source(
+                first, Nmesh=Nmesh, BoxSize=BoxSize, resampler=resampler,
+                interlaced=interlaced, compensated=compensated)
+        else:
+            second = first
+
         super().__init__(
             first, mode, Nmesh, BoxSize, second,
             los, Nmu, dk, kmin, kmax, poles,
         )
+        self.attrs['shotnoise'] /= alperp ** 2 * alpara
 
     # override
-
     def run(self):
         r"""
         Compute the power spectrum in a periodic box, using FFTs.
@@ -148,6 +210,7 @@ class FFTPowerAP(FFTPower):
         power = numpy.squeeze(numpy.empty(result[0].shape, dtype=dtype))
         for icol, col in zip(icols, cols):
             power[col][:] = numpy.squeeze(result[icol])
+        power['power'] /= self.alperp**2 * self.alpara
 
         # multipole results as a structured array
         poles = None
@@ -162,5 +225,7 @@ class FFTPowerAP(FFTPower):
             poles = numpy.empty(result[0].shape, dtype=dtype)
             for icol, col in enumerate(cols):
                 poles[col][:] = result[icol]
+            for key in [f'power_{l}' for l in self.attrs['poles']]:
+                poles[key] /= self.alperp**2 * self.alpara
 
         return self._make_datasets(edges, poles, power, coords, attrs)
