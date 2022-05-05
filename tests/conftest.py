@@ -4,6 +4,7 @@ import re
 import pytest
 from pathlib import Path
 from pytest_regressions.ndarrays_regression import NDArraysRegressionFixture
+from nbodykit import setup_logging
 
 
 def pytest_addoption(parser):
@@ -18,6 +19,13 @@ def pytest_addoption(parser):
     parser.addoption(
         "--rtol", type=float, default=1e-6,
         help="relative tolerance, by default 1e-6",
+    )
+    catalog = str(
+        Path(__file__).parent.parent / 'data'
+        / 'molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii')
+    parser.addoption(
+        "--catalog", type=str, default=catalog,
+        help=f"catalog file, by default {catalog}",
     )
 
 
@@ -37,6 +45,11 @@ def atol(request):
 @pytest.fixture(scope='session')
 def rtol(request):
     yield request.config.getoption("--rtol")
+
+
+@pytest.fixture(scope='session')
+def catalog(request):
+    yield request.config.getoption("--catalog")
 
 
 class DisableForceRegen:
@@ -126,3 +139,6 @@ def compare_ndarrays(ndarrays_regression: NDArraysRegressionFixture):
         if source_data_dir.exists():
             if not any(source_data_dir.iterdir()):
                 source_data_dir.rmdir()
+
+
+setup_logging()
