@@ -1,13 +1,11 @@
+from __future__ import annotations
 import logging
 import warnings
 import numpy as np
 from typing import (
     cast,
-    Optional,
     List,
-    Dict,
     Any,
-    Union,
 )
 from numpy import ndarray as NDArray
 from nbodykit import _global_options
@@ -197,18 +195,18 @@ class SafeFFTRecon(FFTRecon):
         data: CatalogSource,
         ran: CatalogSource,
         Nmesh: int,
-        data_indices: Optional[Indice] = None,
-        ran_indices: Optional[Indice] = None,
-        s_d: Optional[NDArray] = None,
-        s_r: Optional[NDArray] = None,
+        data_indices: Indice | None = None,
+        ran_indices: Indice | None = None,
+        s_d: NDArray | None = None,
+        s_r: NDArray | None = None,
         bias: float = 1.0,
         f: float = 0.0,
-        los: List[int] = [0, 0, 1],
+        los: list[int] = [0, 0, 1],
         R: float = 20,
         position: str = 'Position',
         revert_rsd_random: bool = False,
         scheme: str = 'LGS',
-        BoxSize: Optional[Union[float, List[float]]] = None,
+        BoxSize: float | list[float] | None = None,
         resampler: 'str' = 'cic',
         interlaced: bool = False,
         compensated: bool = False,
@@ -221,11 +219,11 @@ class SafeFFTRecon(FFTRecon):
         self.attrs['interlaced'] = interlaced
         self.attrs['compensated'] = compensated
         self.attrs['resampler'] = str(resampler)
-        self.data_indices: Optional[Indice] = data_indices
-        self.ran_indices: Optional[Indice] = ran_indices
+        self.data_indices: Indice | None = data_indices
+        self.ran_indices: Indice | None = ran_indices
         self.s_d = s_d
         self.s_r = s_r
-        self.displace: Dict[str, Any] = {}
+        self.displace: dict[str, Any] = {}
 
 # dynamic attributes, copied from CatalogMesh
 # =============================================================================>
@@ -350,16 +348,16 @@ class DisplacementSolver:
         dataA: CatalogSource,
         ranA: CatalogSource,
         Nmesh: int,
-        dataB: Optional[CatalogSource] = None,
-        ranB: Optional[CatalogSource] = None,
+        dataB: CatalogSource | None = None,
+        ranB: CatalogSource | None = None,
         biasA: float = 1.0,
         biasB: float = 1.0,
         f: float = 0.0,
-        los: List[int] = [0, 0, 1],
+        los: list[int] = [0, 0, 1],
         R: float = 20,
         position: str = 'Position',
         revert_rsd_random: bool = False,
-        BoxSize: Optional[Union[float, List[float]]] = None,
+        BoxSize: float | list[float] | None = None,
         resampler: str = 'cic',
         interlaced: bool = False,
         compensated: bool = False,
@@ -424,7 +422,7 @@ class DisplacementSolver:
         self.dataB = dataB
         self.ranB = ranB
 
-        self.dis: Dict[str, NDArray] = {}
+        self.dis: dict[str, NDArray] = {}
 
         self.logger = logging.getLogger('DisplacementSolver')
         if self.comm.rank == 0:
