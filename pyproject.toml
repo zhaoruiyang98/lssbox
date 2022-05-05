@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["tests"]
+addopts = "-ra --color=yes"
+markers = [
+    "fcompare: show failed comparison",
+]
+# for future coverage test
+# addopts = "-ra --cov --cov-report=xml --cov-config=.coveragerc --color=yes"

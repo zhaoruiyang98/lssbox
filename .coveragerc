@@ -1,0 +1,9 @@
+[run]
+branch = True
+source = lssbox/
+
+[xml]
+output = tests/coverage.xml
+
+[html]
+directory = tests/htmlcov
