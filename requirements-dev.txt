@@ -1,3 +1,5 @@
 ipython
 autopep8
 typing_extensions>=3.10
+matplotlib
+ipykernel

@@ -21,3 +21,13 @@ def load_csv_catalog(path: str) -> CatalogSource:
     )
     data['Position'] = StackColumns(data['xz'], data['yz'], data['zz'])
     return data
+
+
+def create_dict(res):
+    return dict(
+        k=res.poles['k'],
+        p0=res.poles['power_0'].real,
+        p2=res.poles['power_2'].real,
+        p4=res.poles['power_4'].real,
+        shot=res.attrs['shotnoise'],
+    )

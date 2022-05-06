@@ -13,6 +13,10 @@ def pytest_addoption(parser):
         help="show failed comparison",
     )
     parser.addoption(
+        "--runslow", action="store_true", default=False,
+        help="run slow tests",
+    )
+    parser.addoption(
         "--atol", type=float, default=0,
         help="absolute tolerance, by default 0",
     )
@@ -34,6 +38,11 @@ def pytest_collection_modifyitems(config, items):
         skip = pytest.mark.skip(reason="need --fcompare option to run")
         for item in items:
             if "fcompare" in item.keywords:
+                item.add_marker(skip)
+    if not config.getoption("--runslow"):
+        skip = pytest.mark.skip(reason="need --runslow option to run")
+        for item in items:
+            if "slow" in item.keywords:
                 item.add_marker(skip)
 
 
