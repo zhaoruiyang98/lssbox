@@ -439,14 +439,22 @@ class DisplacementSolver:
                     self.biasA, self.biasB, self.f, self.R, self.los,
                 )
 
-    def interpolate_displacement(self, cat, delta_d, pm, kernel):
-        dpos = cat[self.position].astype('f4').compute()
+    def interpolate_displacement(
+        self, cat, delta_d, pm, kernel, alperp: float = 1, alpara: float = 1):
+        hasAP = False if (alperp == 1 and alpara == 1) else True
+        rescale = np.array([alpara if x == 1 else alperp for x in self.los])
+        if not hasAP:
+            dpos = cat[self.position].astype('f4').compute()
+        else:
+            dpos = cat[self.position].astype('f4').compute() * rescale
         layout = pm.decompose(dpos)
         s_d = np.zeros_like(dpos, dtype='f4')
 
         for d in range(3):
             delta_d.apply(kernel(d)).c2r(out=...)\
                 .readout(dpos, layout=layout, out=s_d[..., d])
+        if hasAP:
+            s_d /= rescale
         return s_d
 
     def create_delta_matter(self):
@@ -481,7 +489,7 @@ class DisplacementSolver:
             delta_d_A[...] += delta_d_B[...] * nb / (na + nb)
         return delta_d_A
 
-    def run(self):
+    def run(self, alperp: float = 1, alpara: float = 1):
         def kernel(d):
             def kernel(k, v):
                 k2 = sum(ki**2 for ki in k)
@@ -494,7 +502,7 @@ class DisplacementSolver:
 
         s_d_A = self.interpolate_displacement(
             self.dataA, delta_m,
-            pm=self.pmA, kernel=kernel,
+            pm=self.pmA, kernel=kernel, alperp=alperp, alpara=alpara,
         )
         s_d_A_std = (self.comm.allreduce(
             (s_d_A**2).sum(axis=0)) / self.dataA.csize) ** 0.5
@@ -507,7 +515,7 @@ class DisplacementSolver:
 
         s_r_A = self.interpolate_displacement(
             self.ranA, delta_m,
-            pm=self.pmA, kernel=kernel,
+            pm=self.pmA, kernel=kernel, alperp=alperp, alpara=alpara,
         )
         s_r_A_std = (self.comm.allreduce(
             (s_r_A**2).sum(axis=0)) / self.ranA.csize) ** 0.5
@@ -531,7 +539,7 @@ class DisplacementSolver:
             assert self.ranB
             s_d_B = self.interpolate_displacement(
                 self.dataB, delta_m,
-                pm=self.pmB, kernel=kernel,
+                pm=self.pmB, kernel=kernel, alperp=alperp, alpara=alpara,
             )
             s_d_B_std = (self.comm.allreduce(
                 (s_d_B**2).sum(axis=0)) / self.dataB.csize) ** 0.5
@@ -544,7 +552,7 @@ class DisplacementSolver:
 
             s_r_B = self.interpolate_displacement(
                 self.ranB, delta_m,
-                pm=self.pmB, kernel=kernel,
+                pm=self.pmB, kernel=kernel, alperp=alperp, alpara=alpara,
             )
             s_r_B_std = (self.comm.allreduce(
                 (s_r_B**2).sum(axis=0)) / self.ranB.csize) ** 0.5

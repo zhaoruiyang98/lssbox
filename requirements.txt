@@ -1,3 +1,4 @@
 nbodykit
 pySpectrum
 numpy>=1.20
+tomli >= 1.1.0 ; python_version < "3.11"
