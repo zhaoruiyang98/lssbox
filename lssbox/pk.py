@@ -99,7 +99,7 @@ class FFTPowerAP(FFTPower):
             interlaced=interlaced, compensated=compensated)
         if second is not None:
             second = _cast_source(
-                first, Nmesh=Nmesh, BoxSize=BoxSize, resampler=resampler,
+                second, Nmesh=Nmesh, BoxSize=BoxSize, resampler=resampler,
                 interlaced=interlaced, compensated=compensated)
         else:
             second = first
