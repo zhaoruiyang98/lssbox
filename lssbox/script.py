@@ -65,6 +65,8 @@ class ReconConfig(Cloneable):
     delta_resampler: str = 'cic'
     delta_interlaced: bool = True
     delta_compensated: bool = True
+    data_idx: list[int] | None = None
+    ran_idx: list[int] | None = None
 
     def solve_displacement(
         self, data, ran, alperp: float = 1, alpara: float = 1,
@@ -86,7 +88,8 @@ class ReconConfig(Cloneable):
             s_d=s_d, s_r=s_r, bias=self.bias, f=self.f, los=self.los, R=self.R,
             revert_rsd_random=self.revert_rsd_random,
             resampler=self.delta_resampler, interlaced=self.delta_interlaced,
-            compensated=self.delta_compensated,
+            compensated=self.delta_compensated, data_indices=self.data_idx,
+            ran_indices=self.ran_idx,
         )
         return recon
 
@@ -311,6 +314,14 @@ class PostPower(SimulationPower):
         return res
 
 
+def half_split(size: int, seed=None) -> tuple[NDArray, NDArray]:
+    rng = np.random.default_rng(seed=seed)
+    idx = rng.choice(size, size, replace=False)
+    x1, x2 = idx[:size // 2], idx[size // 2:]
+    x1.sort(), x2.sort()
+    return x1, x2
+
+
 @dataclass
 class CrossPower(SimulationPower):
     """Measure cross power spectrum with AP effect in a simulation box.
@@ -318,6 +329,11 @@ class CrossPower(SimulationPower):
     recon: ReconConfig = field(default_factory=ReconConfig)
     alpha: int = 10
     seed: int | None = None
+    split: bool = False
+    data_idx1: NDArray | None = None
+    ran_idx1: NDArray | None = None
+    data_idx2: NDArray | None = None
+    ran_idx2: NDArray | None = None
 
     def __post_init__(self, comm=None):
         super().__post_init__(comm=comm)
@@ -332,6 +348,22 @@ class CrossPower(SimulationPower):
             )
         if (self.APmethod == "passive") and (self.BoxSize != self.recon.BoxSize):
             raise ValueError("BoxSize must be the same as recon.BoxSize")
+        if self.split:
+            self.mpi_info(
+                "measuring cross power spectrum via "
+                "half-sum half-difference approach")
+
+    def _update_random_indices(self, data, ran) -> None:
+        given_indices = all([
+            x is not None for x
+            in (self.data_idx1, self.data_idx2, self.ran_idx1, self.ran_idx2)
+        ])
+        if self.split and not given_indices:
+            self.mpi_info("split is True, but missing indices, regenerated")
+            data_idx1, data_idx2 = half_split(data.csize)
+            ran_idx1, ran_idx2 = half_split(ran.csize)
+            self.data_idx1, self.data_idx2 = data_idx1, data_idx2
+            self.ran_idx1, self.ran_idx2 = ran_idx1, ran_idx2
 
     def measure(self, data, recover=True, ran=None):
         boxsize = data.attrs.get('BoxSize', None)
@@ -347,6 +379,7 @@ class CrossPower(SimulationPower):
             ran = UniformCatalog(
                 nbar * self.alpha, BoxSize=self.BoxSize, seed=self.seed)
         ran = cast(Any, ran)
+        self._update_random_indices(data, ran)
 
         alperp, alpara, rescale = self.alperp, self.alpara, self.rescale
         if self.APmethod == "passive":
@@ -362,14 +395,35 @@ class CrossPower(SimulationPower):
             self.recon = self.recon.clone(BoxSize=self.BoxSize)
             data['Position'] *= rescale
             ran['Position'] *= rescale
-            recon = self.recon.recon(
-                data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
-            # measure power spectrum
-            res = FFTPowerAP(
-                recon, second=data,
-                BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
-                **self.power_kwargs,
-            )
+            if not self.split:
+                recon = self.recon.recon(
+                    data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+                # measure power spectrum
+                res = FFTPowerAP(
+                    recon, second=data,
+                    BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
+                    **self.power_kwargs,
+                )
+            else:
+                recon1 = self.recon.clone(
+                    data_idx=self.data_idx1, ran_idx=self.ran_idx1
+                ).recon(data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+                recon2 = self.recon.clone(
+                    data_idx=self.data_idx2, ran_idx=self.ran_idx2
+                ).recon(data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+                pre1 = data[self.data_idx1]
+                pre2 = data[self.data_idx2]
+                res12 = FFTPowerAP(
+                    recon1, second=pre2,
+                    BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
+                    **self.power_kwargs,
+                )
+                res21 = FFTPowerAP(
+                    recon2, second=pre1,
+                    BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
+                    **self.power_kwargs,
+                )
+                res = res12, res21
             if recover:
                 ran.attrs['BoxSize'] = self.BoxSize
         else:
@@ -384,11 +438,31 @@ class CrossPower(SimulationPower):
                     self.recon.BoxSize, rescaled_BoxSize)
                 self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
             with remove_BoxSize(data):
-                recon = self.recon.recon(data, ran)
-                res = FFTPowerAP(
-                    recon, second=data,
-                    BoxSize=rescaled_BoxSize, **self.power_kwargs,
-                )
+                if not self.split:
+                    recon = self.recon.recon(data, ran)
+                    res = FFTPowerAP(
+                        recon, second=data,
+                        BoxSize=rescaled_BoxSize, **self.power_kwargs,
+                    )
+                else:
+                    s_d, s_r = self.recon.solve_displacement(data, ran)
+                    recon1 = self.recon.clone(
+                        data_idx=self.data_idx1, ran_idx=self.ran_idx1
+                    ).recon(data, ran, s_d=s_d, s_r=s_r)
+                    recon2 = self.recon.clone(
+                        data_idx=self.data_idx2, ran_idx=self.ran_idx2
+                    ).recon(data, ran, s_d=s_d, s_r=s_r)
+                    pre1 = data[self.data_idx1]
+                    pre2 = data[self.data_idx2]
+                    res12 = FFTPowerAP(
+                        recon1, second=pre2,
+                        BoxSize=rescaled_BoxSize, **self.power_kwargs,
+                    )
+                    res21 = FFTPowerAP(
+                        recon2, second=pre1,
+                        BoxSize=rescaled_BoxSize, **self.power_kwargs,
+                    )
+                    res = res12, res21
             if recover:
                 data['Position'] *= rescale
                 ran['Position'] *= rescale
@@ -399,6 +473,13 @@ class CrossPower(SimulationPower):
 if __name__ == "__main__":
     from nbodykit import setup_logging
 
+    def compute_mean(res):
+        out1 = collect_poles(res[0])
+        out2 = collect_poles(res[1])
+        out1[1:, :] += out2[1:, :]
+        out1[1:, :] /= 2
+        return out1
+
     setup_logging()
     reader = DataReader('data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii')
     data = reader.load()
@@ -407,12 +488,15 @@ if __name__ == "__main__":
 
     alperp, alpara = 1.1, 1.2
     active_cross = CrossPower(
-        alpara=alpara, alperp=alperp, APmethod='active')
-    passive_cross = CrossPower(
-        alpara=alpara, alperp=alperp, APmethod='passive')
+        alpara=alpara, alperp=alperp, APmethod='active', split=True)
+    pk_active = compute_mean(active_cross.measure(data, ran=ran))
 
-    pk_active = collect_poles(active_cross.measure(data, ran=ran))
-    pk_passive = collect_poles(passive_cross.measure(data, ran=ran))
+    passive_cross = CrossPower(
+        alpara=alpara, alperp=alperp, APmethod='passive', split=True,
+        data_idx1=active_cross.data_idx1, data_idx2=active_cross.data_idx2,
+        ran_idx1=active_cross.ran_idx1, ran_idx2=active_cross.ran_idx2,
+    )
+    pk_passive = compute_mean(passive_cross.measure(data, ran=ran))
 
     np.savetxt('cross_active.txt', pk_active)
     np.savetxt('cross_passive.txt', pk_passive)
