@@ -394,3 +394,25 @@ class CrossPower(SimulationPower):
                 ran['Position'] *= rescale
                 ran.attrs['BoxSize'] = self.BoxSize
         return res
+
+
+if __name__ == "__main__":
+    from nbodykit import setup_logging
+
+    setup_logging()
+    reader = DataReader('data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii')
+    data = reader.load()
+
+    ran = UniformCatalog(data.csize / 1000**3 * 10, BoxSize=1000, seed=42)
+
+    alperp, alpara = 1.1, 1.2
+    active_cross = CrossPower(
+        alpara=alpara, alperp=alperp, APmethod='active')
+    passive_cross = CrossPower(
+        alpara=alpara, alperp=alperp, APmethod='passive')
+
+    pk_active = collect_poles(active_cross.measure(data, ran=ran))
+    pk_passive = collect_poles(passive_cross.measure(data, ran=ran))
+
+    np.savetxt('cross_active.txt', pk_active)
+    np.savetxt('cross_passive.txt', pk_passive)
