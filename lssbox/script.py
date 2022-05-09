@@ -75,7 +75,7 @@ class ReconConfig(Cloneable):
             BoxSize=self.BoxSize, resampler=self.dis_resampler,
             interlaced=self.dis_interlaced, compensated=self.dis_compensated,
         )
-        solver.run(alperp=1, alpara=1)
+        solver.run(alperp=alperp, alpara=alpara)
         return solver.dis['dataA'], solver.dis['ranA']
 
     def recon(self, data, ran, s_d=None, s_r=None) -> SafeFFTRecon:
@@ -125,13 +125,13 @@ def collect_poles(res, shotfactor: float = 1) -> NDArray:
     return out
 
 
-@dataclass(eq=False)
-class MeasurePower:
-    type: Literal["pre", "post"] = "pre"
-    AP: APConfig = field(default_factory=APConfig)
-    recon: ReconConfig | None = None
-    alpha: int = 10
-    seed: int | None = None
+@dataclass
+class SimulationPower:
+    """Measure power spectrum with AP effect in a simulation box.
+    """
+    alperp: float = 1
+    alpara: float = 1
+    APmethod: Literal["active", "passive"] = "active"
     mode: str = '2d'
     BoxSize: float | list[float] = 1000
     Nmesh: int = 512
@@ -145,26 +145,14 @@ class MeasurePower:
     interlaced: bool = True
     compensated: bool = True
     logger: logging.Logger = field(
-        default_factory=lambda: logging.getLogger("MeasurePower"), repr=False)
-    comm: MPI.Intracomm = field(init=False, repr=False)
+        default_factory=lambda: logging.getLogger("SimulationPower"),
+        repr=False, compare=False,
+    )
+    comm: MPI.Intracomm = field(init=False, repr=False, compare=False)
 
     @CurrentMPIComm.enable
     def __post_init__(self, comm=None):
         self.comm = comm
-        if self.type == "post":
-            if self.recon is None:
-                raise ValueError("recon is required when type is 'post'")
-            if self.los != self.recon.los:
-                raise ValueError("los must be the same as recon.los")
-            if self.Nmesh != self.recon.Nmesh:
-                self.mpi_warning(
-                    "Nmesh=%s when doing FFTPower, "
-                    "while Nmesh=%s when doing reconstruction",
-                    self.Nmesh, self.recon.Nmesh)
-            if self.AP.method == "passive":
-                if self.BoxSize != self.recon.BoxSize:
-                    raise ValueError(
-                        "BoxSize must be the same as recon.BoxSize")
 
     @property
     def power_kwargs(self):
@@ -175,21 +163,43 @@ class MeasurePower:
             resampler=self.resampler,
         )
 
-    def measure(self, data, recover=True, ran=None):
+    @property
+    def rescale(self):
+        return np.array(
+            [self.alpara if x == 1 else self.alperp for x in self.los])
+
+    def has_AP(self) -> bool:
+        return True if (self.alperp != 1 or self.alpara != 1) else False
+
+    def mpi_warning(self, msg, *args):
+        if self.comm.rank == 0:
+            self.logger.warning(msg, *args)
+
+    def mpi_info(self, msg, *args):
+        if self.comm.rank == 0:
+            self.logger.info(msg, *args)
+
+    def measure(self, data, recover=True):
+        raise NotImplementedError
+
+
+@dataclass
+class PrePower(SimulationPower):
+    """Measure pre-recon power spectrum with AP effect in a simulation box.
+    """
+
+    def __post_init__(self, comm=None):
+        super().__post_init__(comm=comm)
+        self.logger = logging.getLogger("PrePower")
+
+    def measure(self, data, recover=True):
         boxsize = data.attrs.get('BoxSize', None)
         if boxsize and (boxsize != self.BoxSize):
             raise ValueError("data's BoxSize must be the same as self.BoxSize")
-        if self.type == "pre":
-            out = self.measure_pre(data, recover)
-        else:
-            out = self.measure_post(data, recover, ran=ran)
-        return out
 
-    def measure_pre(self, data, recover=True):
         power_kwargs = self.power_kwargs
-        alpara, alperp = self.AP.alpara, self.AP.alperp
-        rescale = np.array([alpara if x == 1 else alperp for x in self.los])
-        if self.AP.method == "passive":
+        alpara, alperp, rescale = self.alpara, self.alperp, self.rescale
+        if self.APmethod == "passive":
             res = FFTPowerAP(
                 data, BoxSize=self.BoxSize, alpara=alpara, alperp=alperp,
                 **power_kwargs)
@@ -202,21 +212,46 @@ class MeasurePower:
                 data['Position'] *= rescale
         return res
 
-    def measure_post(self, data, recover=True, ran=None):
-        assert self.recon is not None
-        alpara, alperp = self.AP.alpara, self.AP.alperp
-        rescale = np.array([alpara if x == 1 else alperp for x in self.los])
-        _ = np.atleast_1d(self.BoxSize)
-        if len(_) == 1:
-            nbar = data.csize / _[0]**3
+
+@dataclass
+class PostPower(SimulationPower):
+    """Measure post-recon power spectrum with AP effect in a simulation box.
+    """
+    recon: ReconConfig = field(default_factory=ReconConfig)
+    alpha: int = 10
+    seed: int | None = None
+
+    def __post_init__(self, comm=None):
+        super().__post_init__(comm=comm)
+        self.logger = logging.getLogger("PostPower")
+        if self.los != self.recon.los:
+            raise ValueError("los must be the same as recon.los")
+        if self.Nmesh != self.recon.Nmesh:
+            self.mpi_warning(
+                "Nmesh=%s when doing FFTPower, "
+                "while Nmesh=%s when doing reconstruction",
+                self.Nmesh, self.recon.Nmesh
+            )
+        if (self.APmethod == "passive") and (self.BoxSize != self.recon.BoxSize):
+            raise ValueError("BoxSize must be the same as recon.BoxSize")
+
+    def measure(self, data, recover=True, ran=None):
+        boxsize = data.attrs.get('BoxSize', None)
+        if boxsize and (boxsize != self.BoxSize):
+            raise ValueError("data's BoxSize must be the same as self.BoxSize")
+
+        boxsize = np.atleast_1d(self.BoxSize)
+        if len(boxsize) == 1:
+            nbar = data.csize / boxsize**3
         else:
-            nbar = data.csize / np.prod(_)
+            nbar = data.csize / np.prod(boxsize)
         if ran is None:
             ran = UniformCatalog(
                 nbar * self.alpha, BoxSize=self.BoxSize, seed=self.seed)
         ran = cast(Any, ran)
 
-        if self.AP.method == "passive":
+        alperp, alpara, rescale = self.alperp, self.alpara, self.rescale
+        if self.APmethod == "passive":
             # transform to AP space
             rescaled_BoxSize = list(self.BoxSize / rescale)
             data['Position'] /= rescale
@@ -275,10 +310,87 @@ class MeasurePower:
             "shotnoise was computed assuming all Value=Weight=Selection=1")
         return res
 
-    def mpi_warning(self, msg, *args):
-        if self.comm.rank == 0:
-            self.logger.warning(msg, *args)
 
-    def mpi_info(self, msg, *args):
-        if self.comm.rank == 0:
-            self.logger.info(msg, *args)
+@dataclass
+class CrossPower(SimulationPower):
+    """Measure cross power spectrum with AP effect in a simulation box.
+    """
+    recon: ReconConfig = field(default_factory=ReconConfig)
+    alpha: int = 10
+    seed: int | None = None
+
+    def __post_init__(self, comm=None):
+        super().__post_init__(comm=comm)
+        self.logger = logging.getLogger("CrossPower")
+        if self.los != self.recon.los:
+            raise ValueError("los must be the same as recon.los")
+        if self.Nmesh != self.recon.Nmesh:
+            self.mpi_warning(
+                "Nmesh=%s when doing FFTPower, "
+                "while Nmesh=%s when doing reconstruction",
+                self.Nmesh, self.recon.Nmesh
+            )
+        if (self.APmethod == "passive") and (self.BoxSize != self.recon.BoxSize):
+            raise ValueError("BoxSize must be the same as recon.BoxSize")
+
+    def measure(self, data, recover=True, ran=None):
+        boxsize = data.attrs.get('BoxSize', None)
+        if boxsize and (boxsize != self.BoxSize):
+            raise ValueError("data's BoxSize must be the same as self.BoxSize")
+
+        boxsize = np.atleast_1d(self.BoxSize)
+        if len(boxsize) == 1:
+            nbar = data.csize / boxsize**3
+        else:
+            nbar = data.csize / np.prod(boxsize)
+        if ran is None:
+            ran = UniformCatalog(
+                nbar * self.alpha, BoxSize=self.BoxSize, seed=self.seed)
+        ran = cast(Any, ran)
+
+        alperp, alpara, rescale = self.alperp, self.alpara, self.rescale
+        if self.APmethod == "passive":
+            # transform to AP space
+            rescaled_BoxSize = list(self.BoxSize / rescale)
+            data['Position'] /= rescale
+            ran['Position'] /= rescale
+            ran.attrs['BoxSize'] = rescaled_BoxSize
+            self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
+            with remove_BoxSize(data):
+                s_d, s_r = self.recon.solve_displacement(data, ran)
+            # transform back
+            self.recon = self.recon.clone(BoxSize=self.BoxSize)
+            data['Position'] *= rescale
+            ran['Position'] *= rescale
+            recon = self.recon.recon(
+                data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+            # measure power spectrum
+            res = FFTPowerAP(
+                recon, second=data,
+                BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
+                **self.power_kwargs,
+            )
+            if recover:
+                ran.attrs['BoxSize'] = self.BoxSize
+        else:
+            # transform to AP space
+            rescaled_BoxSize = list(self.BoxSize / rescale)
+            data['Position'] /= rescale
+            ran['Position'] /= rescale
+            ran.attrs['BoxSize'] = rescaled_BoxSize
+            if self.recon.BoxSize != rescaled_BoxSize:
+                self.mpi_info(
+                    'rescaled recon.BoxSize from %s to %s',
+                    self.recon.BoxSize, rescaled_BoxSize)
+                self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
+            with remove_BoxSize(data):
+                recon = self.recon.recon(data, ran)
+                res = FFTPowerAP(
+                    recon, second=data,
+                    BoxSize=rescaled_BoxSize, **self.power_kwargs,
+                )
+            if recover:
+                data['Position'] *= rescale
+                ran['Position'] *= rescale
+                ran.attrs['BoxSize'] = self.BoxSize
+        return res
