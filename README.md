@@ -17,12 +17,11 @@ pip install -e .
 ```
 ### pySpectrum
 ```bash
-git clone https://github.com/changhoonhahn/pySpectrum.git
+git clone https://github.com/zhaoruiyang98/pySpectrum
 cd pySpectrum
 conda install h5py
 conda install -c conda-forge pyfftw
 sudo apt install fftw3
-# replace -fallow-argument-mismatch with -Wno-argument-mismatch
 pip install -e .
 ```
 ### lssbox
