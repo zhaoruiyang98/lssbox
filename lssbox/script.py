@@ -38,14 +38,14 @@ class Cloneable:
 
 @dataclass
 class DataReader(Cloneable):
-    file: str = 'data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii'
+    file: str = "data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii"
     reader: type[FileCatalogBase] = CSVCatalog
-    position: list = field(default_factory=lambda: ['xz', 'yz', 'zz'])
+    position: list = field(default_factory=lambda: ["xz", "yz", "zz"])
     kwargs: dict = field(default_factory=_default_CSVkwargs)
 
     def load(self) -> FileCatalogBase:
         data = self.reader(self.file, **self.kwargs)
-        data['Position'] = StackColumns(*[data[key] for key in self.position])
+        data["Position"] = StackColumns(*[data[key] for key in self.position])
         return data
 
 
@@ -58,11 +58,11 @@ class ReconConfig(Cloneable):
     los: list[int] = field(default_factory=lambda: [0, 0, 1])
     R: float = 10
     revert_rsd_random: bool = True
-    scheme: str = 'LGS'
-    dis_resampler: str = 'cic'
+    scheme: str = "LGS"
+    dis_resampler: str = "cic"
     dis_interlaced: bool = True
     dis_compensated: bool = False
-    delta_resampler: str = 'cic'
+    delta_resampler: str = "cic"
     delta_interlaced: bool = True
     delta_compensated: bool = True
     data_idx: list[int] | None = None
@@ -72,23 +72,41 @@ class ReconConfig(Cloneable):
         self, data, ran, alperp: float = 1, alpara: float = 1,
     ) -> tuple[NDArray, NDArray]:
         solver = DisplacementSolver(
-            dataA=data, ranA=ran, Nmesh=self.Nmesh, biasA=self.bias, f=self.f,
-            los=self.los, R=self.R, revert_rsd_random=self.revert_rsd_random,
-            BoxSize=self.BoxSize, resampler=self.dis_resampler,
-            interlaced=self.dis_interlaced, compensated=self.dis_compensated,
+            dataA=data,
+            ranA=ran,
+            Nmesh=self.Nmesh,
+            biasA=self.bias,
+            f=self.f,
+            los=self.los,
+            R=self.R,
+            revert_rsd_random=self.revert_rsd_random,
+            BoxSize=self.BoxSize,
+            resampler=self.dis_resampler,
+            interlaced=self.dis_interlaced,
+            compensated=self.dis_compensated,
         )
         solver.run(alperp=alperp, alpara=alpara)
-        return solver.dis['dataA'], solver.dis['ranA']
+        return solver.dis["dataA"], solver.dis["ranA"]
 
     def recon(self, data, ran, s_d=None, s_r=None) -> SafeFFTRecon:
         if (s_d is None) or (s_r is None):
             s_d, s_r = self.solve_displacement(data, ran)
         recon = SafeFFTRecon(
-            data=data, ran=ran, Nmesh=self.Nmesh, BoxSize=self.BoxSize,
-            s_d=s_d, s_r=s_r, bias=self.bias, f=self.f, los=self.los, R=self.R,
+            data=data,
+            ran=ran,
+            Nmesh=self.Nmesh,
+            BoxSize=self.BoxSize,
+            s_d=s_d,
+            s_r=s_r,
+            bias=self.bias,
+            f=self.f,
+            los=self.los,
+            R=self.R,
             revert_rsd_random=self.revert_rsd_random,
-            resampler=self.delta_resampler, interlaced=self.delta_interlaced,
-            compensated=self.delta_compensated, data_indices=self.data_idx,
+            resampler=self.delta_resampler,
+            interlaced=self.delta_interlaced,
+            compensated=self.delta_compensated,
+            data_indices=self.data_idx,
             ran_indices=self.ran_idx,
         )
         return recon
@@ -106,19 +124,19 @@ class APConfig(Cloneable):
 
 @contextmanager
 def remove_BoxSize(data):
-    data_BoxSize = data.attrs.pop('BoxSize', None)
+    data_BoxSize = data.attrs.pop("BoxSize", None)
     try:
         yield data
     finally:
         if data_BoxSize is not None:
-            data.attrs['BoxSize'] = data_BoxSize
+            data.attrs["BoxSize"] = data_BoxSize
 
 
 def collect_poles(res, shotfactor: float = 1) -> NDArray:
     names = [key for key in res.poles.variables if key.startswith("power_")]
     names.sort()
-    k = res.poles['k']
-    shot = res.attrs['shotnoise']
+    k = res.poles["k"]
+    shot = res.attrs["shotnoise"]
     out = np.empty((len(names) + 1, len(k)), dtype=np.float64)
     out[0] = k
     for i, v in enumerate([res.poles[name].real for name in names]):
@@ -132,10 +150,11 @@ def collect_poles(res, shotfactor: float = 1) -> NDArray:
 class SimulationPower:
     """Measure power spectrum with AP effect in a simulation box.
     """
+
     alperp: float = 1
     alpara: float = 1
     APmethod: Literal["active", "passive"] = "active"
-    mode: str = '2d'
+    mode: str = "2d"
     BoxSize: float | list[float] = 1000
     Nmesh: int = 512
     los: list[int] = field(default_factory=lambda: [0, 0, 1])
@@ -144,12 +163,14 @@ class SimulationPower:
     dk: float = 0.01
     kmin: float = 0
     kmax: float = 1
-    resampler: str = 'cic'
+    resampler: str = "cic"
     interlaced: bool = True
     compensated: bool = True
+    arnold: bool = False
     logger: logging.Logger = field(
         default_factory=lambda: logging.getLogger("SimulationPower"),
-        repr=False, compare=False,
+        repr=False,
+        compare=False,
     )
     comm: MPI.Intracomm = field(init=False, repr=False, compare=False)
 
@@ -160,16 +181,23 @@ class SimulationPower:
     @property
     def power_kwargs(self):
         return dict(
-            mode=self.mode, Nmesh=self.Nmesh, los=self.los, Nmu=self.Nmu,
-            poles=self.poles, dk=self.dk, kmin=self.kmin, kmax=self.kmax,
-            interlaced=self.interlaced, compensated=self.compensated,
+            mode=self.mode,
+            Nmesh=self.Nmesh,
+            los=self.los,
+            Nmu=self.Nmu,
+            poles=self.poles,
+            dk=self.dk,
+            kmin=self.kmin,
+            kmax=self.kmax,
+            interlaced=self.interlaced,
+            compensated=self.compensated,
             resampler=self.resampler,
+            arnold=self.arnold,
         )
 
     @property
     def rescale(self):
-        return np.array(
-            [self.alpara if x == 1 else self.alperp for x in self.los])
+        return np.array([self.alpara if x == 1 else self.alperp for x in self.los])
 
     def has_AP(self) -> bool:
         return True if (self.alperp != 1 or self.alpara != 1) else False
@@ -196,7 +224,7 @@ class PrePower(SimulationPower):
         self.logger = logging.getLogger("PrePower")
 
     def measure(self, data, recover=True):
-        boxsize = data.attrs.get('BoxSize', None)
+        boxsize = data.attrs.get("BoxSize", None)
         if boxsize and (boxsize != self.BoxSize):
             raise ValueError("data's BoxSize must be the same as self.BoxSize")
 
@@ -204,15 +232,16 @@ class PrePower(SimulationPower):
         alpara, alperp, rescale = self.alpara, self.alperp, self.rescale
         if self.APmethod == "passive":
             res = FFTPowerAP(
-                data, BoxSize=self.BoxSize, alpara=alpara, alperp=alperp,
-                **power_kwargs)
+                data, BoxSize=self.BoxSize, alpara=alpara, alperp=alperp, **power_kwargs
+            )
         else:
-            data['Position'] /= rescale
+            data["Position"] /= rescale
             with remove_BoxSize(data):
                 res = FFTPowerAP(
-                    data, BoxSize=list(self.BoxSize / rescale), **power_kwargs)
+                    data, BoxSize=list(self.BoxSize / rescale), **power_kwargs
+                )
             if recover:
-                data['Position'] *= rescale
+                data["Position"] *= rescale
         return res
 
 
@@ -220,6 +249,7 @@ class PrePower(SimulationPower):
 class PostPower(SimulationPower):
     """Measure post-recon power spectrum with AP effect in a simulation box.
     """
+
     recon: ReconConfig = field(default_factory=ReconConfig)
     alpha: int = 10
     seed: int | None = None
@@ -233,50 +263,54 @@ class PostPower(SimulationPower):
             self.mpi_warning(
                 "Nmesh=%s when doing FFTPower, "
                 "while Nmesh=%s when doing reconstruction",
-                self.Nmesh, self.recon.Nmesh
+                self.Nmesh,
+                self.recon.Nmesh,
             )
         if (self.APmethod == "passive") and (self.BoxSize != self.recon.BoxSize):
             raise ValueError("BoxSize must be the same as recon.BoxSize")
 
     def measure(self, data, recover=True, ran=None):
-        boxsize = data.attrs.get('BoxSize', None)
+        boxsize = data.attrs.get("BoxSize", None)
         if boxsize and (boxsize != self.BoxSize):
             raise ValueError("data's BoxSize must be the same as self.BoxSize")
 
         boxsize = np.atleast_1d(self.BoxSize)
         if len(boxsize) == 1:
-            nbar = data.csize / boxsize**3
+            nbar = data.csize / boxsize ** 3
         else:
             nbar = data.csize / np.prod(boxsize)
         if ran is None:
             ran = UniformCatalog(
-                nbar * self.alpha, BoxSize=self.BoxSize, seed=self.seed)
+                nbar * self.alpha, BoxSize=self.BoxSize, seed=self.seed
+            )
         ran = cast(Any, ran)
 
         alperp, alpara, rescale = self.alperp, self.alpara, self.rescale
         if self.APmethod == "passive":
             # transform to AP space
             rescaled_BoxSize = list(self.BoxSize / rescale)
-            data['Position'] /= rescale
-            ran['Position'] /= rescale
-            ran.attrs['BoxSize'] = rescaled_BoxSize
+            data["Position"] /= rescale
+            ran["Position"] /= rescale
+            ran.attrs["BoxSize"] = rescaled_BoxSize
             self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
             with remove_BoxSize(data):
                 s_d, s_r = self.recon.solve_displacement(data, ran)
             # transform back
             self.recon = self.recon.clone(BoxSize=self.BoxSize)
-            data['Position'] *= rescale
-            ran['Position'] *= rescale
-            recon = self.recon.recon(
-                data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+            data["Position"] *= rescale
+            ran["Position"] *= rescale
+            recon = self.recon.recon(data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
             # measure power spectrum
             res = FFTPowerAP(
-                recon, BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
-                **self.power_kwargs)
-            res.attrs['shotnoise'] = (
-                1 + 1 / self.alpha) * 1 / nbar / np.prod(rescale)
+                recon,
+                BoxSize=self.BoxSize,
+                alperp=alperp,
+                alpara=alpara,
+                **self.power_kwargs,
+            )
+            res.attrs["shotnoise"] = (1 + 1 / self.alpha) * 1 / nbar / np.prod(rescale)
             if recover:
-                ran.attrs['BoxSize'] = self.BoxSize
+                ran.attrs["BoxSize"] = self.BoxSize
             # TODO: debug
             # # solve displacement field
             # s_d, s_r = self.recon.solve_displacement(
@@ -291,33 +325,32 @@ class PostPower(SimulationPower):
         else:
             # transform to AP space
             rescaled_BoxSize = list(self.BoxSize / rescale)
-            data['Position'] /= rescale
-            ran['Position'] /= rescale
-            ran.attrs['BoxSize'] = rescaled_BoxSize
+            data["Position"] /= rescale
+            ran["Position"] /= rescale
+            ran.attrs["BoxSize"] = rescaled_BoxSize
             if self.recon.BoxSize != rescaled_BoxSize:
                 self.mpi_info(
-                    'rescaled recon.BoxSize from %s to %s',
-                    self.recon.BoxSize, rescaled_BoxSize)
+                    "rescaled recon.BoxSize from %s to %s",
+                    self.recon.BoxSize,
+                    rescaled_BoxSize,
+                )
                 self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
             with remove_BoxSize(data):
                 recon = self.recon.recon(data, ran)
-                res = FFTPowerAP(
-                    recon, BoxSize=rescaled_BoxSize, **self.power_kwargs)
+                res = FFTPowerAP(recon, BoxSize=rescaled_BoxSize, **self.power_kwargs)
             if recover:
-                data['Position'] *= rescale
-                ran['Position'] *= rescale
-                ran.attrs['BoxSize'] = self.BoxSize
-            res.attrs['shotnoise'] = (
-                1 + 1 / self.alpha) * 1 / nbar / np.prod(rescale)
-        self.mpi_warning(
-            "shotnoise was computed assuming all Value=Weight=Selection=1")
+                data["Position"] *= rescale
+                ran["Position"] *= rescale
+                ran.attrs["BoxSize"] = self.BoxSize
+            res.attrs["shotnoise"] = (1 + 1 / self.alpha) * 1 / nbar / np.prod(rescale)
+        self.mpi_warning("shotnoise was computed assuming all Value=Weight=Selection=1")
         return res
 
 
 def half_split(size: int, seed=None) -> tuple[NDArray, NDArray]:
     rng = np.random.default_rng(seed=seed)
     idx = rng.choice(size, size, replace=False)
-    x1, x2 = idx[:size // 2], idx[size // 2:]
+    x1, x2 = idx[: size // 2], idx[size // 2 :]
     x1.sort(), x2.sort()
     return x1, x2
 
@@ -326,6 +359,7 @@ def half_split(size: int, seed=None) -> tuple[NDArray, NDArray]:
 class CrossPower(SimulationPower):
     """Measure cross power spectrum with AP effect in a simulation box.
     """
+
     recon: ReconConfig = field(default_factory=ReconConfig)
     alpha: int = 10
     seed: int | None = None
@@ -344,20 +378,24 @@ class CrossPower(SimulationPower):
             self.mpi_warning(
                 "Nmesh=%s when doing FFTPower, "
                 "while Nmesh=%s when doing reconstruction",
-                self.Nmesh, self.recon.Nmesh
+                self.Nmesh,
+                self.recon.Nmesh,
             )
         if (self.APmethod == "passive") and (self.BoxSize != self.recon.BoxSize):
             raise ValueError("BoxSize must be the same as recon.BoxSize")
         if self.split:
             self.mpi_info(
                 "measuring cross power spectrum via "
-                "half-sum half-difference approach")
+                "half-sum half-difference approach"
+            )
 
     def _update_random_indices(self, data, ran) -> None:
-        given_indices = all([
-            x is not None for x
-            in (self.data_idx1, self.data_idx2, self.ran_idx1, self.ran_idx2)
-        ])
+        given_indices = all(
+            [
+                x is not None
+                for x in (self.data_idx1, self.data_idx2, self.ran_idx1, self.ran_idx2)
+            ]
+        )
         if self.split and not given_indices:
             self.mpi_info("split is True, but missing indices, regenerated")
             data_idx1, data_idx2 = half_split(data.csize)
@@ -366,18 +404,19 @@ class CrossPower(SimulationPower):
             self.ran_idx1, self.ran_idx2 = ran_idx1, ran_idx2
 
     def measure(self, data, recover=True, ran=None):
-        boxsize = data.attrs.get('BoxSize', None)
+        boxsize = data.attrs.get("BoxSize", None)
         if boxsize and (boxsize != self.BoxSize):
             raise ValueError("data's BoxSize must be the same as self.BoxSize")
 
         boxsize = np.atleast_1d(self.BoxSize)
         if len(boxsize) == 1:
-            nbar = data.csize / boxsize**3
+            nbar = data.csize / boxsize ** 3
         else:
             nbar = data.csize / np.prod(boxsize)
         if ran is None:
             ran = UniformCatalog(
-                nbar * self.alpha, BoxSize=self.BoxSize, seed=self.seed)
+                nbar * self.alpha, BoxSize=self.BoxSize, seed=self.seed
+            )
         ran = cast(Any, ran)
         self._update_random_indices(data, ran)
 
@@ -385,23 +424,27 @@ class CrossPower(SimulationPower):
         if self.APmethod == "passive":
             # transform to AP space
             rescaled_BoxSize = list(self.BoxSize / rescale)
-            data['Position'] /= rescale
-            ran['Position'] /= rescale
-            ran.attrs['BoxSize'] = rescaled_BoxSize
+            data["Position"] /= rescale
+            ran["Position"] /= rescale
+            ran.attrs["BoxSize"] = rescaled_BoxSize
             self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
             with remove_BoxSize(data):
                 s_d, s_r = self.recon.solve_displacement(data, ran)
             # transform back
             self.recon = self.recon.clone(BoxSize=self.BoxSize)
-            data['Position'] *= rescale
-            ran['Position'] *= rescale
+            data["Position"] *= rescale
+            ran["Position"] *= rescale
             if not self.split:
                 recon = self.recon.recon(
-                    data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+                    data, ran, s_d=s_d * rescale, s_r=s_r * rescale
+                )
                 # measure power spectrum
                 res = FFTPowerAP(
-                    recon, second=data,
-                    BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
+                    recon,
+                    second=data,
+                    BoxSize=self.BoxSize,
+                    alperp=alperp,
+                    alpara=alpara,
                     **self.power_kwargs,
                 )
             else:
@@ -414,35 +457,45 @@ class CrossPower(SimulationPower):
                 pre1 = data[self.data_idx1]
                 pre2 = data[self.data_idx2]
                 res12 = FFTPowerAP(
-                    recon1, second=pre2,
-                    BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
+                    recon1,
+                    second=pre2,
+                    BoxSize=self.BoxSize,
+                    alperp=alperp,
+                    alpara=alpara,
                     **self.power_kwargs,
                 )
                 res21 = FFTPowerAP(
-                    recon2, second=pre1,
-                    BoxSize=self.BoxSize, alperp=alperp, alpara=alpara,
+                    recon2,
+                    second=pre1,
+                    BoxSize=self.BoxSize,
+                    alperp=alperp,
+                    alpara=alpara,
                     **self.power_kwargs,
                 )
                 res = res12, res21
             if recover:
-                ran.attrs['BoxSize'] = self.BoxSize
+                ran.attrs["BoxSize"] = self.BoxSize
         else:
             # transform to AP space
             rescaled_BoxSize = list(self.BoxSize / rescale)
-            data['Position'] /= rescale
-            ran['Position'] /= rescale
-            ran.attrs['BoxSize'] = rescaled_BoxSize
+            data["Position"] /= rescale
+            ran["Position"] /= rescale
+            ran.attrs["BoxSize"] = rescaled_BoxSize
             if self.recon.BoxSize != rescaled_BoxSize:
                 self.mpi_info(
-                    'rescaled recon.BoxSize from %s to %s',
-                    self.recon.BoxSize, rescaled_BoxSize)
+                    "rescaled recon.BoxSize from %s to %s",
+                    self.recon.BoxSize,
+                    rescaled_BoxSize,
+                )
                 self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
             with remove_BoxSize(data):
                 if not self.split:
                     recon = self.recon.recon(data, ran)
                     res = FFTPowerAP(
-                        recon, second=data,
-                        BoxSize=rescaled_BoxSize, **self.power_kwargs,
+                        recon,
+                        second=data,
+                        BoxSize=rescaled_BoxSize,
+                        **self.power_kwargs,
                     )
                 else:
                     s_d, s_r = self.recon.solve_displacement(data, ran)
@@ -455,18 +508,22 @@ class CrossPower(SimulationPower):
                     pre1 = data[self.data_idx1]
                     pre2 = data[self.data_idx2]
                     res12 = FFTPowerAP(
-                        recon1, second=pre2,
-                        BoxSize=rescaled_BoxSize, **self.power_kwargs,
+                        recon1,
+                        second=pre2,
+                        BoxSize=rescaled_BoxSize,
+                        **self.power_kwargs,
                     )
                     res21 = FFTPowerAP(
-                        recon2, second=pre1,
-                        BoxSize=rescaled_BoxSize, **self.power_kwargs,
+                        recon2,
+                        second=pre1,
+                        BoxSize=rescaled_BoxSize,
+                        **self.power_kwargs,
                     )
                     res = res12, res21
             if recover:
-                data['Position'] *= rescale
-                ran['Position'] *= rescale
-                ran.attrs['BoxSize'] = self.BoxSize
+                data["Position"] *= rescale
+                ran["Position"] *= rescale
+                ran.attrs["BoxSize"] = self.BoxSize
         return res
 
 
@@ -481,22 +538,29 @@ if __name__ == "__main__":
         return out1
 
     setup_logging()
-    reader = DataReader('data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii')
+    reader = DataReader("data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii")
     data = reader.load()
 
-    ran = UniformCatalog(data.csize / 1000**3 * 10, BoxSize=1000, seed=42)
+    ran = UniformCatalog(data.csize / 1000 ** 3 * 10, BoxSize=1000, seed=42)
 
     alperp, alpara = 1.1, 1.2
     active_cross = CrossPower(
-        alpara=alpara, alperp=alperp, APmethod='active', split=True)
+        alpara=alpara, alperp=alperp, APmethod="active", split=True
+    )
     pk_active = compute_mean(active_cross.measure(data, ran=ran))
 
     passive_cross = CrossPower(
-        alpara=alpara, alperp=alperp, APmethod='passive', split=True,
-        data_idx1=active_cross.data_idx1, data_idx2=active_cross.data_idx2,
-        ran_idx1=active_cross.ran_idx1, ran_idx2=active_cross.ran_idx2,
+        alpara=alpara,
+        alperp=alperp,
+        APmethod="passive",
+        split=True,
+        data_idx1=active_cross.data_idx1,
+        data_idx2=active_cross.data_idx2,
+        ran_idx1=active_cross.ran_idx1,
+        ran_idx2=active_cross.ran_idx2,
     )
     pk_passive = compute_mean(passive_cross.measure(data, ran=ran))
 
-    np.savetxt('cross_active.txt', pk_active)
-    np.savetxt('cross_passive.txt', pk_passive)
+    np.savetxt("cross_active.txt", pk_active)
+    np.savetxt("cross_passive.txt", pk_passive)
+
