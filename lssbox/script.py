@@ -398,8 +398,8 @@ class CrossPower(SimulationPower):
         )
         if self.split and not given_indices:
             self.mpi_info("split is True, but missing indices, regenerated")
-            data_idx1, data_idx2 = half_split(data.csize)
-            ran_idx1, ran_idx2 = half_split(ran.csize)
+            data_idx1, data_idx2 = half_split(data.csize, seed=self.seed)
+            ran_idx1, ran_idx2 = half_split(ran.csize, seed=self.seed)
             self.data_idx1, self.data_idx2 = data_idx1, data_idx2
             self.ran_idx1, self.ran_idx2 = ran_idx1, ran_idx2
 
@@ -541,11 +541,12 @@ if __name__ == "__main__":
     reader = DataReader("data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii")
     data = reader.load()
 
-    ran = UniformCatalog(data.csize / 1000 ** 3 * 10, BoxSize=1000, seed=42)
+    seed = 42
+    ran = UniformCatalog(data.csize / 1000 ** 3 * 10, BoxSize=1000, seed=seed)
 
     alperp, alpara = 1.1, 1.2
     active_cross = CrossPower(
-        alpara=alpara, alperp=alperp, APmethod="active", split=True
+        alpara=alpara, alperp=alperp, APmethod="active", split=True, seed=seed
     )
     pk_active = compute_mean(active_cross.measure(data, ran=ran))
 
@@ -558,6 +559,7 @@ if __name__ == "__main__":
         data_idx2=active_cross.data_idx2,
         ran_idx1=active_cross.ran_idx1,
         ran_idx2=active_cross.ran_idx2,
+        seed=seed,
     )
     pk_passive = compute_mean(passive_cross.measure(data, ran=ran))
 
