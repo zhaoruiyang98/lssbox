@@ -1,6 +1,115 @@
 from __future__ import annotations
 import numpy as np
+from contextlib import contextmanager
+from mpi4py import MPI
+from numpy import ndarray as NDArray
 from numpy import newaxis
+from scipy.interpolate import Rbf
+from scipy.special import legendre
+
+
+def AP(
+    lBk: list[NDArray],
+    k1: NDArray,
+    k2: NDArray,
+    k3: NDArray,
+    mu1: NDArray,
+    phi: NDArray,
+    alperp: float,
+    alpara: float,
+):
+    """compute approximate AP effect of B0 using m=0 modes only
+    """
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    nranks = comm.Get_size()
+    if rank == 0:
+        F = alpara / alperp
+
+        # Define mu1, mu2, mu3 angles
+        eta12 = (k3 ** 2.0 - k1 ** 2.0 - k2 ** 2.0) / (2.0 * k1 * k2)
+        eta12_ = np.sqrt(np.abs(1.0 - eta12 ** 2.0))
+
+        # k, n, m : k, mu1, phi
+        mu2 = eta12[:, newaxis, newaxis] * mu1[newaxis, :, newaxis] - np.sqrt(
+            1.0 - mu1[newaxis, :, newaxis] ** 2.0
+        ) * eta12_[:, newaxis, newaxis] * np.cos(phi[newaxis, newaxis, :])
+        mu3 = (
+            -(k2 / k3)[:, newaxis, newaxis] * mu2[:, :, :]
+            - (k1 / k3)[:, newaxis, newaxis] * mu1[newaxis, :, newaxis]
+        )
+
+        def qnu(k, mu) -> tuple[NDArray, NDArray]:
+            q = k / alperp * (1 + mu ** 2 * (F ** (-2) - 1)) ** 0.5
+            nu = mu / F * (1 + mu ** 2 * (F ** (-2) - 1)) ** (-0.5)
+            return q, nu
+
+        q1, nu1 = qnu(k1[:, newaxis, newaxis], mu1[newaxis, :, newaxis])
+        q2, _ = qnu(k2[:, newaxis, newaxis], mu2[:, :, :])
+        q3, _ = qnu(k3[:, newaxis, newaxis], mu3[:, :, :])
+        tmp = np.ones(q2.shape)
+        q1 = q1[:, :, :] * tmp
+        nu1 = nu1[:, :, :] * tmp
+
+        def split(arr):
+            return np.array_split(arr, nranks, axis=0)
+
+        q1, q2, q3, nu1 = (split(x) for x in (q1, q2, q3, nu1))
+
+    else:
+        q1, q2, q3, nu1 = None, None, None, None
+
+    q1, q2, q3, nu1 = (comm.scatter(x, root=0) for x in (q1, q2, q3, nu1))
+
+    nl = len(lBk)
+    ells = [2 * i for i in range(nl)]
+    Bkfns = [Rbf(k1, k2, k3, Blk, function="cubic") for Blk in lBk]
+    Bks = []
+    for fn in Bkfns:
+        ni, nj, nk = q1.shape
+        out = np.zeros(q1.shape)
+        for i in range(ni):
+            for j in range(nj):
+                for k in range(nk):
+                    out[i, j, k] = float(fn(q1[i, j, k], q2[i, j, k], q3[i, j, k]))
+
+        Bks.append(out)
+    # Bks = [fn(q1, q2, q3) for fn in Bksfns] # memory issue
+    legends = [legendre(ell)(nu1) for ell in ells]
+    Bk = sum(x * y for x, y in zip(Bks, legends))
+
+    Bk = comm.gather(Bk, root=0)
+    if rank == 0:
+        Bk = np.vstack(Bk)
+    Bk = comm.bcast(Bk, root=0)
+
+    out = np.trapz(Bk, phi, axis=-1)
+    out = np.trapz(out, mu1, axis=-1)
+    out = out / (alpara ** 2 * alperp ** 4 * 4 * np.pi)
+    return out
+
+
+@contextmanager
+def main_rank():
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    if rank == 0:
+        yield
+    else:
+        yield
+
+
+@contextmanager
+def timer(name: str):
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    if rank == 0:
+        start = MPI.Wtime()
+        yield
+        end = MPI.Wtime()
+        print(f"{name}: {end - start}")
+    else:
+        yield
 
 
 def rebinning(
