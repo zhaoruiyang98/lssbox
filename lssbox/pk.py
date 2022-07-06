@@ -413,8 +413,9 @@ def arnold_project_to_basis(
 
         # Get the bin indices for mu on the slab
         mu = sum(xx * ll for xx, ll in zip(xvec, los))
-        mu[~mask_zero] /= xnorm[~mask_zero]
+        mu[~mask_zero] /= xnorm[~mask_zero]  # type: ignore
 
+        nonsingular = None  # type: ignore
         if hermitian_symmetric == 0:
             mus = [mu]
         else:
@@ -427,26 +428,26 @@ def arnold_project_to_basis(
         for imu, mu in enumerate(mus):
             # Make the multi-index
             dig_mu = np.digitize(
-                mu.flat, muedges, right=False
+                mu.flat, muedges, right=False  # type: ignore
             )  # this is bins[i-1] <= x < bins[i]
-            dig_mu[mu.real.flat == muedges[-1]] = nmu  # last mu inclusive
+            dig_mu[mu.real.flat == muedges[-1]] = nmu  # type: ignore # last mu inclusive
             dig_mu[mask_zero.flat] = nmu + 2
 
             multi_index = np.ravel_multi_index([dig_x, dig_mu], (nx + 3, nmu + 3))
 
             if hermitian_symmetric and imu:
-                multi_index = multi_index[nonsingular.flat]
+                multi_index = multi_index[nonsingular.flat]  # type: ignore
                 xnorm = xnorm[nonsingular]  # it will be recomputed
-                mu = mu[nonsingular]
+                mu = mu[nonsingular]  # type: ignore
 
             # Count number of modes in each bin
-            nsum.flat += np.bincount(multi_index, minlength=nsum.size)
+            nsum.flat += np.bincount(multi_index, minlength=nsum.size)  # type: ignore
             # Sum up x in each bin
-            xsum.flat += np.bincount(
+            xsum.flat += np.bincount(  # type: ignore
                 multi_index, weights=xnorm.flat, minlength=nsum.size
             )
             # Sum up mu in each bin
-            musum.flat += np.bincount(multi_index, weights=mu.flat, minlength=nsum.size)
+            musum.flat += np.bincount(multi_index, weights=mu.flat, minlength=nsum.size)  # type: ignore
 
             # Compute multipoles by weighting by Legendre(ell, mu)
             for ill, ell in enumerate(unique_ells):
@@ -458,7 +459,7 @@ def arnold_project_to_basis(
                     weightedy3d = (
                         hermitian_symmetric
                         * weightedy3d
-                        * y3d[islab][nonsingular[0]].conj()
+                        * y3d[islab][nonsingular[0]].conj()  # type: ignore
                     )  # hermitian_symmetric is 1 or -1
                 else:
                     weightedy3d = weightedy3d * y3d[islab, ...]
@@ -523,5 +524,5 @@ def arnold_project_to_basis(
 
     # Return y(x,mu) + (possibly empty) multipoles
     toret = [(xmean2d, mumean2d, y2d, n2d, zero2d)]
-    toret.append((xmean1d, poles, n1d, poles_zero) if return_poles else None)
+    toret.append((xmean1d, poles, n1d, poles_zero) if return_poles else None)  # type: ignore
     return toret
