@@ -286,7 +286,7 @@ class PostPower(SimulationPower):
 
         alperp, alpara, rescale = self.alperp, self.alpara, self.rescale
         if self.APmethod == "passive":
-            if self.solve_displacement_without_AP:
+            if not self.solve_displacement_without_AP:
                 # transform to AP space
                 rescaled_BoxSize = list(self.BoxSize / rescale)
                 data["Position"] /= rescale
