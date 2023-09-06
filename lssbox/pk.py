@@ -14,7 +14,7 @@ from pmesh.pm import RealField
 
 @contextmanager
 def rescale_y3d(
-    y3d: ComplexField, *, los=[0, 0, 1], alpara: float = 1.0, alperp: float = 1.0,
+    y3d: ComplexField, *, los=[0, 0, 1], alpara: float = 1.0, alperp: float = 1.0
 ):
     rawx = [xx.copy() for xx in y3d.x]
     for xx, is_z in zip(y3d.x, los):
@@ -24,7 +24,7 @@ def rescale_y3d(
 
 
 def _cast_source(
-    source, BoxSize, Nmesh, resampler="cic", interlaced=False, compensated=True,
+    source, BoxSize, Nmesh, resampler="cic", interlaced=False, compensated=True
 ):
     from pmesh.pm import Field
     from nbodykit.source.mesh import FieldMesh
@@ -69,8 +69,8 @@ class FFTPowerAP(FFTPower):
         works only when first and second are instance of CatalogSourceBase, by default False
     compensated: bool
         works only when first and second are instance of CatalogSourceBase, by default True
-    arnold: bool
-        whether to use arnold's function for binning measurement, by default False
+    arnaud: bool
+        whether to use arnaud's function for binning measurement, by default False
 
     Notes
     -----
@@ -95,9 +95,9 @@ class FFTPowerAP(FFTPower):
         resampler="cic",
         interlaced=False,
         compensated=True,
-        arnold=False,
+        arnaud=False,
     ):
-        self.arnold = arnold
+        self.arnaud = arnaud
         self.alpara, self.alperp = alpara, alperp
         if not (los == [0, 0, 1] or los == [0, 1, 0] or los == [1, 0, 0]):
             raise ValueError("LOS must be [0, 0, 1], [0, 1, 0] or [1, 0, 0].")
@@ -135,16 +135,16 @@ class FFTPowerAP(FFTPower):
             second = first
 
         super().__init__(
-            first, mode, Nmesh, BoxSize, second, los, Nmu, dk, kmin, kmax, poles,
+            first, mode, Nmesh, BoxSize, second, los, Nmu, dk, kmin, kmax, poles
         )
-        self.attrs["shotnoise"] /= alperp ** 2 * alpara
+        self.attrs["shotnoise"] /= alperp**2 * alpara
 
     # override
     def run(self):
         r"""
         Compute the power spectrum in a periodic box, using FFTs.
 
-        Returns 
+        Returns
         -------
         power : :class:`~nbodykit.binned_statistic.BinnedStatistic`
             a BinnedStatistic object that holds the measured :math:`P(k)` or
@@ -220,12 +220,12 @@ class FFTPowerAP(FFTPower):
         with rescale_y3d(
             y3d, los=self.attrs["los"], alpara=self.alpara, alperp=self.alperp
         ) as y3d:
-            if not self.arnold:
+            if not self.arnaud:
                 result, pole_result = project_to_basis(
                     y3d, edges, poles=self.attrs["poles"], los=self.attrs["los"]
                 )
             else:
-                result, pole_result = arnold_project_to_basis(
+                result, pole_result = arnaud_project_to_basis(
                     y3d,
                     edges,
                     ells=self.attrs["poles"],
@@ -252,7 +252,7 @@ class FFTPowerAP(FFTPower):
         power = numpy.squeeze(numpy.empty(result[0].shape, dtype=dtype))
         for icol, col in zip(icols, cols):
             power[col][:] = numpy.squeeze(result[icol])
-        power["power"] /= self.alperp ** 2 * self.alpara
+        power["power"] /= self.alperp**2 * self.alpara
 
         # multipole results as a structured array
         poles = None
@@ -268,12 +268,12 @@ class FFTPowerAP(FFTPower):
             for icol, col in enumerate(cols):
                 poles[col][:] = result[icol]
             for key in [f"power_{l}" for l in self.attrs["poles"]]:
-                poles[key] /= self.alperp ** 2 * self.alpara
+                poles[key] /= self.alperp**2 * self.alpara
 
         return self._make_datasets(edges, poles, power, coords, attrs)
 
 
-def arnold_project_to_basis(
+def arnaud_project_to_basis(
     y3d, edges, los=(0, 0, 1), ells=None, antisymmetric=False, exclude_zero=False
 ):
     r"""
@@ -399,7 +399,7 @@ def arnold_project_to_basis(
         xvec = (x3d[0][islab].real.astype(xdtype),) + tuple(
             x3d[i].real.astype(xdtype) for i in range(1, 3)
         )
-        xnorm = sum(xx ** 2 for xx in xvec) ** 0.5
+        xnorm = sum(xx**2 for xx in xvec) ** 0.5
 
         # If empty, do nothing
         if len(xnorm.flat) == 0:
@@ -451,7 +451,6 @@ def arnold_project_to_basis(
 
             # Compute multipoles by weighting by Legendre(ell, mu)
             for ill, ell in enumerate(unique_ells):
-
                 weightedy3d = (2.0 * ell + 1.0) * legpoly[ill](mu)
 
                 if hermitian_symmetric and imu:
@@ -503,7 +502,6 @@ def arnold_project_to_basis(
         nsum[dig_zero] += nsum[nx + 2, nmu + 2]
 
     with np.errstate(invalid="ignore", divide="ignore"):
-
         # 2D binned results
         y2d = (ysum[0, ...] / nsum)[sl, sl]  # ell=0 is first index
         xmean2d = (xsum / nsum)[sl, sl]
