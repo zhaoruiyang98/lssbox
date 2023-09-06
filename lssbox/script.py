@@ -29,6 +29,7 @@ def _default_CSVkwargs():
     }
 
 
+@dataclass
 class Cloneable:
     def clone(self, **kwargs):
         dct = deepcopy(dataclasses.asdict(self))
@@ -69,7 +70,7 @@ class ReconConfig(Cloneable):
     ran_idx: list[int] | None = None
 
     def solve_displacement(
-        self, data, ran, alperp: float = 1, alpara: float = 1,
+        self, data, ran, alperp: float = 1, alpara: float = 1
     ) -> tuple[NDArray, NDArray]:
         solver = DisplacementSolver(
             dataA=data,
@@ -143,13 +144,12 @@ def collect_poles(res, shotfactor: float = 1) -> NDArray:
         if i == 0:
             v -= shot * shotfactor
         out[i + 1, :] = v
-    return out
+    return out.T
 
 
 @dataclass
 class SimulationPower:
-    """Measure power spectrum with AP effect in a simulation box.
-    """
+    """Measure power spectrum with AP effect in a simulation box."""
 
     alperp: float = 1
     alpara: float = 1
@@ -166,7 +166,7 @@ class SimulationPower:
     resampler: str = "cic"
     interlaced: bool = True
     compensated: bool = True
-    arnold: bool = False
+    arnaud: bool = False
     logger: logging.Logger = field(
         default_factory=lambda: logging.getLogger("SimulationPower"),
         repr=False,
@@ -192,7 +192,7 @@ class SimulationPower:
             interlaced=self.interlaced,
             compensated=self.compensated,
             resampler=self.resampler,
-            arnold=self.arnold,
+            arnaud=self.arnaud,
         )
 
     @property
@@ -216,8 +216,7 @@ class SimulationPower:
 
 @dataclass
 class PrePower(SimulationPower):
-    """Measure pre-recon power spectrum with AP effect in a simulation box.
-    """
+    """Measure pre-recon power spectrum with AP effect in a simulation box."""
 
     def __post_init__(self, comm=None):
         super().__post_init__(comm=comm)
@@ -247,12 +246,12 @@ class PrePower(SimulationPower):
 
 @dataclass
 class PostPower(SimulationPower):
-    """Measure post-recon power spectrum with AP effect in a simulation box.
-    """
+    """Measure post-recon power spectrum with AP effect in a simulation box."""
 
     recon: ReconConfig = field(default_factory=ReconConfig)
     alpha: int = 10
     seed: int | None = None
+    solve_displacement_without_AP: bool = False
 
     def __post_init__(self, comm=None):
         super().__post_init__(comm=comm)
@@ -276,7 +275,7 @@ class PostPower(SimulationPower):
 
         boxsize = np.atleast_1d(self.BoxSize)
         if len(boxsize) == 1:
-            nbar = data.csize / boxsize ** 3
+            nbar = data.csize / boxsize**3
         else:
             nbar = data.csize / np.prod(boxsize)
         if ran is None:
@@ -287,19 +286,24 @@ class PostPower(SimulationPower):
 
         alperp, alpara, rescale = self.alperp, self.alpara, self.rescale
         if self.APmethod == "passive":
-            # transform to AP space
-            rescaled_BoxSize = list(self.BoxSize / rescale)
-            data["Position"] /= rescale
-            ran["Position"] /= rescale
-            ran.attrs["BoxSize"] = rescaled_BoxSize
-            self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
-            with remove_BoxSize(data):
-                s_d, s_r = self.recon.solve_displacement(data, ran)
-            # transform back
-            self.recon = self.recon.clone(BoxSize=self.BoxSize)
-            data["Position"] *= rescale
-            ran["Position"] *= rescale
-            recon = self.recon.recon(data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+            if self.solve_displacement_without_AP:
+                # transform to AP space
+                rescaled_BoxSize = list(self.BoxSize / rescale)
+                data["Position"] /= rescale
+                ran["Position"] /= rescale
+                ran.attrs["BoxSize"] = rescaled_BoxSize
+                self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
+                with remove_BoxSize(data):
+                    s_d, s_r = self.recon.solve_displacement(data, ran)
+                # transform back
+                self.recon = self.recon.clone(BoxSize=self.BoxSize)
+                data["Position"] *= rescale
+                ran["Position"] *= rescale
+                recon = self.recon.recon(
+                    data, ran, s_d=s_d * rescale, s_r=s_r * rescale
+                )
+            else:
+                recon = self.recon.recon(data, ran)
             # measure power spectrum
             res = FFTPowerAP(
                 recon,
@@ -323,6 +327,8 @@ class PostPower(SimulationPower):
             # res.attrs['shotnoise'] = (
             #     1 + 1 / self.alpha) * 1 / nbar / np.prod(rescale)
         else:
+            if self.solve_displacement_without_AP:
+                raise NotImplementedError
             # transform to AP space
             rescaled_BoxSize = list(self.BoxSize / rescale)
             data["Position"] /= rescale
@@ -357,8 +363,7 @@ def half_split(size: int, seed=None) -> tuple[NDArray, NDArray]:
 
 @dataclass
 class CrossPower(SimulationPower):
-    """Measure cross power spectrum with AP effect in a simulation box.
-    """
+    """Measure cross power spectrum with AP effect in a simulation box."""
 
     recon: ReconConfig = field(default_factory=ReconConfig)
     alpha: int = 10
@@ -410,7 +415,7 @@ class CrossPower(SimulationPower):
 
         boxsize = np.atleast_1d(self.BoxSize)
         if len(boxsize) == 1:
-            nbar = data.csize / boxsize ** 3
+            nbar = data.csize / boxsize**3
         else:
             nbar = data.csize / np.prod(boxsize)
         if ran is None:
@@ -530,39 +535,71 @@ class CrossPower(SimulationPower):
 if __name__ == "__main__":
     from nbodykit import setup_logging
 
-    def compute_mean(res):
-        out1 = collect_poles(res[0])
-        out2 = collect_poles(res[1])
-        out1[1:, :] += out2[1:, :]
-        out1[1:, :] /= 2
-        return out1
-
     setup_logging()
-    reader = DataReader("data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii")
-    data = reader.load()
-
-    seed = 42
-    ran = UniformCatalog(data.csize / 1000 ** 3 * 10, BoxSize=1000, seed=seed)
-
-    alperp, alpara = 1.1, 1.2
-    active_cross = CrossPower(
-        alpara=alpara, alperp=alperp, APmethod="active", split=True, seed=seed
+    reader = DataReader(
+        "data/molino.z0.0.s8_p.nbody225.hod2_zrsd.ascii",
+        position=["x", "y", "zz"],
+        kwargs={**_default_CSVkwargs(), "usecols": ["x", "y", "zz"]},
     )
-    pk_active = compute_mean(active_cross.measure(data, ran=ran))
+    data = reader.load()
+    seed = 42
+    ran = UniformCatalog(data.csize / 1000**3 * 10, BoxSize=1000, seed=seed)
+    alperp, alpara = 1.1, 0.9
+    recon_config = ReconConfig(
+        bias=2.0, f=0.8360851852560938
+    )  # DESI LRG, default molino
 
-    passive_cross = CrossPower(
+    pre = PrePower().measure(data)
+    np.savetxt("plk_pre.txt", collect_poles(pre))
+    pre = PrePower(alperp=alperp, alpara=alpara, APmethod="active").measure(data)
+    np.savetxt("plk_pre_AP.txt", collect_poles(pre))
+
+    post = PostPower(seed=seed, recon=recon_config).measure(data, ran=ran)
+    np.savetxt("plk_post.txt", collect_poles(post))
+    post = PostPower(
+        alpara=alpara, alperp=alperp, APmethod="active", seed=seed, recon=recon_config
+    ).measure(data, ran=ran)
+    np.savetxt("plk_post_AP_active.txt", collect_poles(post))
+    post = PostPower(
+        alpara=alpara, alperp=alperp, APmethod="passive", seed=seed, recon=recon_config
+    ).measure(data, ran=ran)
+    np.savetxt("plk_post_AP_passive.txt", collect_poles(post))
+    post = PostPower(
         alpara=alpara,
         alperp=alperp,
         APmethod="passive",
-        split=True,
-        data_idx1=active_cross.data_idx1,
-        data_idx2=active_cross.data_idx2,
-        ran_idx1=active_cross.ran_idx1,
-        ran_idx2=active_cross.ran_idx2,
         seed=seed,
-    )
-    pk_passive = compute_mean(passive_cross.measure(data, ran=ran))
+        recon=recon_config,
+        solve_displacement_without_AP=True,
+    ).measure(data, ran=ran)
+    np.savetxt("plk_post_AP_passive_disnoAP.txt", collect_poles(post))
 
-    np.savetxt("cross_active.txt", pk_active)
-    np.savetxt("cross_passive.txt", pk_passive)
+    # EXAMPLE: cross
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # def compute_mean(res):
+    #     out1 = collect_poles(res[0])
+    #     out2 = collect_poles(res[1])
+    #     out1[:, 1:] += out2[:, 1:]
+    #     out1[:, 1:] /= 2
+    #     return out1
+    #
+    # active_cross = CrossPower(
+    #     alpara=alpara, alperp=alperp, APmethod="active", split=True, seed=seed
+    # )
+    # pk_active = compute_mean(active_cross.measure(data, ran=ran))
 
+    # passive_cross = CrossPower(
+    #     alpara=alpara,
+    #     alperp=alperp,
+    #     APmethod="passive",
+    #     split=True,
+    #     data_idx1=active_cross.data_idx1,
+    #     data_idx2=active_cross.data_idx2,
+    #     ran_idx1=active_cross.ran_idx1,
+    #     ran_idx2=active_cross.ran_idx2,
+    #     seed=seed,
+    # )
+    # pk_passive = compute_mean(passive_cross.measure(data, ran=ran))
+
+    # np.savetxt("cross_active.txt", pk_active)
+    # np.savetxt("cross_passive.txt", pk_passive)
