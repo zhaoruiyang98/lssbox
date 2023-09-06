@@ -373,6 +373,7 @@ class CrossPower(SimulationPower):
     ran_idx1: NDArray | None = None
     data_idx2: NDArray | None = None
     ran_idx2: NDArray | None = None
+    solve_displacement_without_AP: bool = False
 
     def __post_init__(self, comm=None):
         super().__post_init__(comm=comm)
@@ -427,22 +428,24 @@ class CrossPower(SimulationPower):
 
         alperp, alpara, rescale = self.alperp, self.alpara, self.rescale
         if self.APmethod == "passive":
-            # transform to AP space
-            rescaled_BoxSize = list(self.BoxSize / rescale)
-            data["Position"] /= rescale
-            ran["Position"] /= rescale
-            ran.attrs["BoxSize"] = rescaled_BoxSize
-            self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
-            with remove_BoxSize(data):
+            if not self.solve_displacement_without_AP:
+                # transform to AP space
+                rescaled_BoxSize = list(self.BoxSize / rescale)
+                data["Position"] /= rescale
+                ran["Position"] /= rescale
+                ran.attrs["BoxSize"] = rescaled_BoxSize
+                self.recon = self.recon.clone(BoxSize=rescaled_BoxSize)
+                with remove_BoxSize(data):
+                    s_d, s_r = self.recon.solve_displacement(data, ran)
+                # transform back
+                self.recon = self.recon.clone(BoxSize=self.BoxSize)
+                data["Position"] *= rescale
+                ran["Position"] *= rescale
+                s_d, s_r = s_d * rescale, s_r * rescale
+            else:
                 s_d, s_r = self.recon.solve_displacement(data, ran)
-            # transform back
-            self.recon = self.recon.clone(BoxSize=self.BoxSize)
-            data["Position"] *= rescale
-            ran["Position"] *= rescale
             if not self.split:
-                recon = self.recon.recon(
-                    data, ran, s_d=s_d * rescale, s_r=s_r * rescale
-                )
+                recon = self.recon.recon(data, ran, s_d=s_d, s_r=s_r)
                 # measure power spectrum
                 res = FFTPowerAP(
                     recon,
@@ -455,10 +458,10 @@ class CrossPower(SimulationPower):
             else:
                 recon1 = self.recon.clone(
                     data_idx=self.data_idx1, ran_idx=self.ran_idx1
-                ).recon(data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+                ).recon(data, ran, s_d=s_d, s_r=s_r)
                 recon2 = self.recon.clone(
                     data_idx=self.data_idx2, ran_idx=self.ran_idx2
-                ).recon(data, ran, s_d=s_d * rescale, s_r=s_r * rescale)
+                ).recon(data, ran, s_d=s_d, s_r=s_r)
                 pre1 = data[self.data_idx1]
                 pre2 = data[self.data_idx2]
                 res12 = FFTPowerAP(
@@ -481,6 +484,8 @@ class CrossPower(SimulationPower):
             if recover:
                 ran.attrs["BoxSize"] = self.BoxSize
         else:
+            if self.solve_displacement_without_AP:
+                raise NotImplementedError
             # transform to AP space
             rescaled_BoxSize = list(self.BoxSize / rescale)
             data["Position"] /= rescale
