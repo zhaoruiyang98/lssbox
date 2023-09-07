@@ -167,6 +167,7 @@ class SimulationPower:
     interlaced: bool = True
     compensated: bool = True
     arnaud: bool = False
+    AP_Nmesh: bool = False
     logger: logging.Logger = field(
         default_factory=lambda: logging.getLogger("SimulationPower"),
         repr=False,
@@ -180,9 +181,10 @@ class SimulationPower:
 
     @property
     def power_kwargs(self):
+        Nmesh = self.rescaled_Nmesh if self.AP_Nmesh else self.Nmesh
         return dict(
             mode=self.mode,
-            Nmesh=self.Nmesh,
+            Nmesh=Nmesh,
             los=self.los,
             Nmu=self.Nmu,
             poles=self.poles,
@@ -198,6 +200,12 @@ class SimulationPower:
     @property
     def rescale(self):
         return np.array([self.alpara if x == 1 else self.alperp for x in self.los])
+
+    @property
+    def rescaled_Nmesh(self) -> Any:
+        Nmesh = np.empty(3, dtype=int)
+        Nmesh[...] = self.Nmesh
+        return (Nmesh * self.rescale).astype(int)
 
     def has_AP(self) -> bool:
         return True if (self.alperp != 1 or self.alpara != 1) else False
@@ -265,6 +273,9 @@ class PostPower(SimulationPower):
                 self.Nmesh,
                 self.recon.Nmesh,
             )
+        if self.AP_Nmesh:
+            self.recon = self.recon.clone()
+            self.recon.Nmesh = self.rescaled_Nmesh.tolist()
         if (self.APmethod == "passive") and (self.BoxSize != self.recon.BoxSize):
             raise ValueError("BoxSize must be the same as recon.BoxSize")
 
@@ -387,6 +398,9 @@ class CrossPower(SimulationPower):
                 self.Nmesh,
                 self.recon.Nmesh,
             )
+        if self.AP_Nmesh:
+            self.recon = self.recon.clone()
+            self.recon.Nmesh = self.rescaled_Nmesh.tolist()
         if (self.APmethod == "passive") and (self.BoxSize != self.recon.BoxSize):
             raise ValueError("BoxSize must be the same as recon.BoxSize")
         if self.split:
