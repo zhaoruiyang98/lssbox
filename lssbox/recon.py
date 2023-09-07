@@ -143,7 +143,7 @@ class SafeFFTRecon(FFTRecon):
         the data catalog, e.g. halos. `data.attrs['BoxSize']` is used if argument `BoxSize` is not given.
     ran  :  CatalogSource
         the random catalog, e.g. from a `UniformCatalog` object.
-    Nmesh : int
+    Nmesh : int | list[int]
         The size of the FFT Mesh. Rule of thumb is that the size of a mesh cell
         shall be 2 ~ 4 times smaller than the smoothing length, `R`.
     data_indices: list[int], optional
@@ -194,7 +194,7 @@ class SafeFFTRecon(FFTRecon):
         self,
         data: CatalogSource,
         ran: CatalogSource,
-        Nmesh: int,
+        Nmesh: int | list[int],
         data_indices: Indice | None = None,
         ran_indices: Indice | None = None,
         s_d: NDArray | None = None,
@@ -362,7 +362,7 @@ class DisplacementSolver:
         self,
         dataA: CatalogSource,
         ranA: CatalogSource,
-        Nmesh: int,
+        Nmesh: int | list[int],
         dataB: CatalogSource | None = None,
         ranB: CatalogSource | None = None,
         biasA: float = 1.0,

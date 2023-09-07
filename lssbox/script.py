@@ -53,7 +53,7 @@ class DataReader(Cloneable):
 @dataclass
 class ReconConfig(Cloneable):
     BoxSize: float | list[float] = 1000
-    Nmesh: int = 512
+    Nmesh: int | list[int] = 512
     bias: float = 2.4
     f: float = 0.53
     los: list[int] = field(default_factory=lambda: [0, 0, 1])
@@ -156,7 +156,7 @@ class SimulationPower:
     APmethod: Literal["active", "passive"] = "active"
     mode: str = "2d"
     BoxSize: float | list[float] = 1000
-    Nmesh: int = 512
+    Nmesh: int | list[int] = 512
     los: list[int] = field(default_factory=lambda: [0, 0, 1])
     Nmu: int = 100
     poles: list[int] = field(default_factory=lambda: [0, 2, 4])
@@ -258,7 +258,7 @@ class PostPower(SimulationPower):
         self.logger = logging.getLogger("PostPower")
         if self.los != self.recon.los:
             raise ValueError("los must be the same as recon.los")
-        if self.Nmesh != self.recon.Nmesh:
+        if any(np.atleast_1d(self.Nmesh) != self.recon.Nmesh):
             self.mpi_warning(
                 "Nmesh=%s when doing FFTPower, "
                 "while Nmesh=%s when doing reconstruction",
@@ -380,7 +380,7 @@ class CrossPower(SimulationPower):
         self.logger = logging.getLogger("CrossPower")
         if self.los != self.recon.los:
             raise ValueError("los must be the same as recon.los")
-        if self.Nmesh != self.recon.Nmesh:
+        if any(np.atleast_1d(self.Nmesh) != self.recon.Nmesh):
             self.mpi_warning(
                 "Nmesh=%s when doing FFTPower, "
                 "while Nmesh=%s when doing reconstruction",
